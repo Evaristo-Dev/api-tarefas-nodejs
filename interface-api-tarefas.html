@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciador de Tarefas</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --warning: #f59e0b;
+            --danger: #dc2626;
+            --success: #16a34a;
+            --background: #f8fafc;
+            --text: #1e293b;
+            --gray: #64748b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        h1, h2 { text-align: center; }
+        form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-warning { background-color: var(--warning); color: white; padding: 6px 12px; width: auto; }
+        .btn-danger { background-color: var(--danger); color: white; padding: 6px 12px; width: auto; }
+        .btn-secondary { background-color: var(--gray); color: white; }
+        button:hover { opacity: 0.9; }
+        .tarefa-card {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .tarefa-info h3 { margin: 0 0 5px 0; }
+        .tarefa-info p { margin: 0; color: var(--gray); font-size: 14px; }
+        .tarefa-actions {
+            display: flex;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>📝 Minhas Tarefas</h1>
+
+    <!-- FORMULÁRIO DE CRIAÇÃO E ATUALIZAÇÃO -->
+    <form id="formTarefa">
+        <h2 id="formTitulo">Nova Tarefa</h2>
+        <div class="form-group">
+            <label for="titulo">Título</label>
+            <input type="text" id="titulo" required placeholder="Digite o título da tarefa">
+        </div>
+        <div class="form-group">
+            <label for="descricao">Descrição</label>
+            <textarea id="descricao" rows="3" placeholder="Digite a descrição da tarefa"></textarea>
+        </div>
+        
+        <div class="btn-group">
+            <button type="submit" id="btnSalvar" class="btn-primary">Salvar Tarefa</button>
+            <button type="button" id="btnCancelar" class="btn-secondary" style="display: none;" onclick="cancelarEdicao()">Cancelar</button>
+        </div>
+    </form>
+
+    <!-- LISTA DE TAREFAS -->
+    <h2>Lista de Tarefas</h2>
+    <div id="listaTarefas"></div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/tarefas'; 
+
+        const form = document.getElementById('formTarefa');
+        const formTitulo = document.getElementById('formTitulo');
+        const btnSalvar = document.getElementById('btnSalvar');
+        const btnCancelar = document.getElementById('btnCancelar');
+        const listaContainer = document.getElementById('listaTarefas');
+
+        // Estado da aplicação para controle de edição
+        let idTarefaEmEdicao = null;
+
+        // 1. LISTAR TAREFAS (READ)
+        async function carregarTarefas() {
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                
+                listaContainer.innerHTML = '';
+
+                if (!data.tarefas || data.tarefas.length === 0) {
+                    listaContainer.innerHTML = '<p style="text-align:center; color:#64748b;">Nenhuma tarefa encontrada.</p>';
+                    return;
+                }
+
+                data.tarefas.forEach(tarefa => {
+                    const card = document.createElement('div');
+                    card.className = 'tarefa-card';
+                    card.innerHTML = `
+                        <div class="tarefa-info">
+                            <h3>${tarefa.titulo}</h3>
+                            <p>${tarefa.descricao || 'Sem descrição'}</p>
+                        </div>
+                        <div class="tarefa-actions">
+                            <button class="btn-warning" onclick="prepararEdicao(${tarefa.id}, '${tarefa.titulo.replace(/'/g, "\\'")}', '${(tarefa.descricao || '').replace(/'/g, "\\'")}')">Editar</button>
+                            <button class="btn-danger" onclick="deletarTarefa(${tarefa.id})">Excluir</button>
+                        </div>
+                    `;
+                    listaContainer.appendChild(card);
+                });
+            } catch (error) {
+                console.error('Erro ao buscar tarefas:', error);
+                alert('Erro ao carregar a lista de tarefas da API.');
+            }
+        }
+
+        // 2. ENVIAR FORMULÁRIO (CREATE OU UPDATE)
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const titulo = document.getElementById('titulo').value;
+            const descricao = document.getElementById('descricao').value;
+
+            // Define se a rota será POST (criar) ou PUT (atualizar) com base no estado
+            const url = idTarefaEmEdicao ? `${API_URL}/${idTarefaEmEdicao}` : API_URL;
+            const method = idTarefaEmEdicao ? 'PUT' : 'POST';
+
+            try {
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ titulo, descricao })
+                });
+
+                if (response.ok) {
+                    cancelarEdicao(); // Reseta o formulário e limpa o ID em edição
+                    carregarTarefas(); // Atualiza a lista na tela
+                } else {
+                    alert('Erro ao processar requisição no servidor.');
+                }
+            } catch (error) {
+                console.error('Erro ao salvar tarefa:', error);
+            }
+        });
+
+        // 3. PREPARAR INTERFACE PARA EDIÇÃO (UPDATE - PARTE 1)
+        function prepararEdicao(id, titulo, descricao) {
+            idTarefaEmEdicao = id;
+            
+            // Joga os valores atuais para os inputs
+            document.getElementById('titulo').value = titulo;
+            document.getElementById('descricao').value = descricao;
+
+            // Muda os textos da interface
+            formTitulo.innerText = 'Editar Tarefa';
+            btnSalvar.innerText = 'Atualizar Tarefa';
+            btnSalvar.style.backgroundColor = 'var(--warning)';
+            btnCancelar.style.display = 'block'; // Mostra botão cancelar
+            
+            // Rola a tela suavemente até o formulário
+            form.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 4. CANCELAR OU RESETAR EDIÇÃO
+        function cancelarEdicao() {
+            idTarefaEmEdicao = null;
+            form.reset();
+            
+            // Restaura textos originais da interface
+            formTitulo.innerText = 'Nova Tarefa';
+            btnSalvar.innerText = 'Salvar Tarefa';
+            btnSalvar.style.backgroundColor = 'var(--primary)';
+            btnCancelar.style.display = 'none'; // Esconde botão cancelar
+        }
+
+        // 5. DELETAR TAREFA (DELETE)
+        async function deletarTarefa(id) {
+            if (!confirm('Tem certeza que deseja excluir esta tarefa?')) return;
+
+            try {
+                const response = await fetch(`${API_URL}/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    if (idTarefaEmEdicao === id) cancelarEdicao();
+                    carregarTarefas();
+                } else {
+                    alert('Erro ao deletar tarefa no servidor.');
+                }
+            } catch (error) {
+                console.error('Erro ao deletar tarefa:', error);
+            }
+        }
+
+        // Inicializa a página buscando as tarefas existentes
+        carregarTarefas();
+    </script>
+</body>
+</html>
